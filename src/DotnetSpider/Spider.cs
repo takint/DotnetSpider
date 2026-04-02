@@ -5,8 +5,8 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
+using System.Threading.RateLimiting;
 using System.Threading.Tasks;
-using Bert.RateLimiters;
 using DotnetSpider.DataFlow;
 using DotnetSpider.DataFlow.Parser;
 using DotnetSpider.DataFlow.Storage.Common;
@@ -443,9 +443,13 @@ public abstract class Spider :
                             continue;
                         }
 
-                        while (bucket.ShouldThrottle(1, out var waitTimeMillis))
+                        using var lease = await bucket.AcquireAsync(permitCount: 1);
+
+                        if (!lease.IsAcquired)
                         {
-                            await Task.Delay(waitTimeMillis, default(CancellationToken));
+                            // Should not happen with QueueLimit = int.MaxValue, but guard anyway
+                            Logger.LogWarning("Rate limiter failed to acquire lease");
+                            continue;
                         }
 
                         if (!await PublishRequestMessagesAsync(request))
@@ -544,18 +548,21 @@ public abstract class Spider :
         _services.ApplicationLifetime.StopApplication();
     }
 
-    private static FixedTokenBucket CreateBucket(double speed)
+    private static TokenBucketRateLimiter CreateBucket(double speed)
     {
-        if (speed >= 1)
+        var intervalMs = speed >= 1
+            ? (int)(1000 / speed)
+            : (int)((1 / speed) * 1000);
+
+        return new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
         {
-            var defaultTimeUnit = (int)(1000 / speed);
-            return new FixedTokenBucket(1, 1, defaultTimeUnit);
-        }
-        else
-        {
-            var defaultTimeUnit = (int)((1 / speed) * 1000);
-            return new FixedTokenBucket(1, 1, defaultTimeUnit);
-        }
+            TokenLimit = 1,
+            TokensPerPeriod = 1,
+            ReplenishmentPeriod = TimeSpan.FromMilliseconds(intervalMs),
+            AutoReplenishment = true,
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = int.MaxValue
+        });
     }
 
     private async Task<bool> PublishRequestMessagesAsync(params Request[] requests)
