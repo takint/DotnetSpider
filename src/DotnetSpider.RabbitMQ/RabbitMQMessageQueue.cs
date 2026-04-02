@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
@@ -10,17 +10,16 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
 
-
 [assembly: InternalsVisibleTo("DotnetSpider.Tests")]
 
 namespace DotnetSpider.RabbitMQ;
 
-public class RabbitMQMessageQueue : IMessageQueue
+public class RabbitMQMessageQueue : IMessageQueue, IAsyncDisposable
 {
     private readonly RabbitMQOptions _options;
     private readonly PersistentConnection _connection;
     private readonly ILogger<RabbitMQMessageQueue> _logger;
-    private readonly IModel _publishChannel;
+    private IChannel _publishChannel;
 
     public RabbitMQMessageQueue(IOptions<RabbitMQOptions> options, ILoggerFactory loggerFactory)
     {
@@ -28,22 +27,36 @@ public class RabbitMQMessageQueue : IMessageQueue
         _options = options.Value;
         _connection = new PersistentConnection(CreateConnectionFactory(),
             loggerFactory.CreateLogger<PersistentConnection>(), _options.RetryCount);
+    }
 
+    public static async Task<RabbitMQMessageQueue> CreateAsync(IOptions<RabbitMQOptions> options,
+        ILoggerFactory loggerFactory)
+    {
+        var instance = new RabbitMQMessageQueue(options, loggerFactory);
+        await instance.InitializeAsync();
+        return instance;
+    }
+
+    private async Task InitializeAsync()
+    {
         if (!_connection.IsConnected)
         {
-            _connection.TryConnect();
+            await _connection.TryConnectAsync();
         }
 
         _logger.LogTrace("Creating RabbitMQ publish channel");
 
-        _publishChannel = _connection.CreateModel();
-        _publishChannel.ExchangeDeclare(_options.Exchange, "direct", true);
+        _publishChannel = await _connection.CreateChannelAsync();
+        await _publishChannel.ExchangeDeclareAsync(_options.Exchange, "direct", durable: true);
     }
 
     private IConnectionFactory CreateConnectionFactory()
     {
-        var connectionFactory =
-            new ConnectionFactory { HostName = _options.HostName, DispatchConsumersAsync = true };
+        var connectionFactory = new ConnectionFactory
+        {
+            HostName = _options.HostName
+        };
+
         if (_options.Port > 0)
         {
             connectionFactory.Port = _options.Port;
@@ -71,43 +84,55 @@ public class RabbitMQMessageQueue : IMessageQueue
 
         if (!_connection.IsConnected)
         {
-            _connection.TryConnect();
+            await _connection.TryConnectAsync();
         }
 
         var policy = Policy.Handle<BrokerUnreachableException>()
             .Or<SocketException>()
-            .WaitAndRetry(_options.RetryCount, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
+            .WaitAndRetryAsync(_options.RetryCount,
+                retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                 (ex, time) =>
                 {
-                    _logger.LogWarning(ex,
-                        "Could not publish data after {Timeout}s",
+                    _logger.LogWarning(ex, "Could not publish data after {Timeout}s",
                         $"{time.TotalSeconds:n1}");
+                    return Task.CompletedTask;
                 });
 
-        _logger.LogTrace("Declaring RabbitMQ exchange to publish event");
-
-        policy.Execute(() =>
+        await policy.ExecuteAsync(async () =>
         {
-            var properties = _publishChannel.CreateBasicProperties();
-            properties.DeliveryMode = 2; // persistent
-            properties.ContentEncoding = "lz4";
+            var properties = new BasicProperties
+            {
+                DeliveryMode = DeliveryModes.Persistent,
+                ContentEncoding = "lz4"
+            };
+
             _logger.LogTrace("Publishing event to RabbitMQ");
 
-            _publishChannel.BasicPublish(_options.Exchange, topic, true, properties, bytes);
+            await _publishChannel.BasicPublishAsync(
+                exchange: _options.Exchange,
+                routingKey: topic,
+                mandatory: true,
+                basicProperties: properties,
+                body: bytes);
         });
-
-        await Task.CompletedTask;
     }
 
-    public void CloseQueue(string queue)
+    public async Task CloseQueueAsync(string queue)
     {
-        using var channel = _connection.CreateModel();
-        channel.QueueDelete(queue);
+        var channel = await _connection.CreateChannelAsync();
+        await using (channel)
+        {
+            await channel.QueueDeleteAsync(queue);
+        }
     }
+
+    // Keep sync version for interface compatibility if needed
+    public void CloseQueue(string queue) =>
+        CloseQueueAsync(queue).GetAwaiter().GetResult();
 
     public bool IsDistributed => true;
 
-    public Task ConsumeAsync(AsyncMessageConsumer<byte[]> consumer)
+    public async Task ConsumeAsync(AsyncMessageConsumer<byte[]> consumer)
     {
         if (consumer.Registered)
         {
@@ -116,18 +141,23 @@ public class RabbitMQMessageQueue : IMessageQueue
 
         if (!_connection.IsConnected)
         {
-            _connection.TryConnect();
+            await _connection.TryConnectAsync();
         }
 
-        var channel = _connection.CreateModel();
+        var channel = await _connection.CreateChannelAsync();
+
+        await channel.QueueDeclareAsync(
+            queue: consumer.Queue,
+            durable: true,
+            exclusive: false,
+            autoDelete: true,
+            arguments: null);
+
+        await channel.QueueBindAsync(consumer.Queue, _options.Exchange, consumer.Queue);
+
         var basicConsumer = new AsyncEventingBasicConsumer(channel);
-        channel.QueueDeclare(consumer.Queue,
-            true,
-            false,
-            true,
-            null);
-        channel.QueueBind(consumer.Queue, _options.Exchange, consumer.Queue);
-        basicConsumer.Received += async (model, ea) =>
+
+        basicConsumer.ReceivedAsync += async (model, ea) =>
         {
             try
             {
@@ -135,22 +165,33 @@ public class RabbitMQMessageQueue : IMessageQueue
             }
             finally
             {
-                channel.BasicAck(ea.DeliveryTag, false);
+                await channel.BasicAckAsync(ea.DeliveryTag, false);
             }
         };
-        consumer.OnClosing += x =>
-        {
-            channel.Close();
-        };
-        //7. 启动消费者
-        channel.BasicConsume(consumer.Queue, false, basicConsumer);
 
-        return Task.CompletedTask;
+        consumer.OnClosing += async x =>
+        {
+            await channel.CloseAsync();
+        };
+
+        await channel.BasicConsumeAsync(consumer.Queue, false, basicConsumer);
     }
 
     public void Dispose()
     {
-        _connection?.Dispose();
-        _publishChannel?.Dispose();
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_publishChannel != null)
+        {
+            await _publishChannel.DisposeAsync();
+        }
+
+        if (_connection != null)
+        {
+            await _connection.DisposeAsync();
+        }
     }
 }

@@ -21,26 +21,13 @@ class Program
             .WriteTo.Console().WriteTo.RollingFile("logs/spiders.log")
             .CreateLogger();
 
-        var typeName = Environment.GetEnvironmentVariable("DOTNET_SPIDER_TYPE");
-        if (string.IsNullOrWhiteSpace(typeName))
-        {
-            Log.Logger.Error("Type name is missing");
-            return;
-        }
-        else
-        {
-            var type = Type.GetType(typeName);
-            if (type == null)
-            {
-                Log.Logger.Error("Type unfounded");
-                return;
-            }
+        
 
-            var builder = Builder.CreateDefaultBuilder(type);
+            var builder = Builder.CreateDefaultBuilder<MySpider>();
             builder.UseSerilog();
             builder.UseRabbitMQ();
             await builder.Build().RunAsync();
-        }
+        
 
 
         Console.WriteLine("Bye!");

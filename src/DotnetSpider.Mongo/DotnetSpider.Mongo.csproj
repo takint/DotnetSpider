@@ -3,11 +3,11 @@
   <Import Project="../../package.props" />
   <PropertyGroup>
     <PackageId>DotnetSpider.Mongo</PackageId>
-    <TargetFramework>net8</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MongoDB.Driver" Version="2.25.0" />
+    <PackageReference Include="MongoDB.Driver" Version="3.7.1" />
   </ItemGroup>
 
   <ItemGroup>
