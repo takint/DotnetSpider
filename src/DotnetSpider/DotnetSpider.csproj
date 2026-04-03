@@ -1,25 +1,24 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <PackageId>DotnetSpider</PackageId>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <TargetFramework>net8</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
 
   <Import Project="../../package.props" />
 
   <ItemGroup>
-    <PackageReference Include="Bert.RateLimiters" Version="1.0.15" />
-    <PackageReference Include="MessagePack" Version="2.5.140" />
-    <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="Dapper" Version="2.1.35" />
-    <PackageReference Include="HtmlAgilityPack" Version="1.11.61" />
-    <PackageReference Include="System.Data.SqlClient" Version="4.8.6" />
-    <PackageReference Include="System.Text.Json" Version="8.0.3" />
-    <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
+    <PackageReference Include="MessagePack" Version="3.1.4" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.5" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Dapper" Version="2.1.72" />
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+    <PackageReference Include="System.Text.Json" Version="10.0.5" />
+    <PackageReference Include="System.Threading.Channels" Version="10.0.5" />
+    <PackageReference Include="System.Threading.RateLimiting" Version="10.0.5" />
     <PackageReference Include="ZCJ.HashedWheelTimer" Version="0.10.2" />
     <PackageReference Include="murmurhash" Version="1.0.3" />
   </ItemGroup>

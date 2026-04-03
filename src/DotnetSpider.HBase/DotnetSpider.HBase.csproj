@@ -3,7 +3,7 @@
   <Import Project="../../package.props"/>
   <PropertyGroup>
     <PackageId>DotnetSpider.HBase</PackageId>
-    <TargetFramework>net8</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\DotnetSpider\DotnetSpider.csproj"/>
